@@ -1,0 +1,354 @@
+import pandas as pd
+import numpy as np
+import numdifftools as nd
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 unused import
+from matplotlib import cm
+from matplotlib.ticker import LinearLocator, FormatStrFormatter
+import argparse
+import csv
+import scipy.stats as stat
+from scipy.optimize import minimize, Bounds
+from scipy.integrate import quad
+from scipy.stats import norm
+import warnings
+#from scipy.stats.mvn import mvnun
+
+def gaussian(x, mu, sig):
+    return np.exp(-np.power(x - mu, 2.) / (2 * np.power(sig, 2.)))
+
+# RW
+def RW_obs(s, isitgo, Q, h): # find the probability that the agent will pick the "go" action
+        
+    thing=0.5 # temporary value to avoid error when trying to print before assignment
+    
+    with warnings.catch_warnings():
+        warnings.filterwarnings('error')
+        try:
+            #thing =np.exp(Q[s,isitgo])/(np.exp(Q[s,0])+np.exp(Q[s,1]))
+            print('thing',thing,'; s: ',s,'; Q: ',Q)
+        except Warning as e:
+            print('thing',thing,'; s: ',s,'; Q: ',Q)
+            quit()
+    #thing =np.exp(Q[s,isitgo])/(np.exp(Q[s,0])+np.exp(Q[s,1]))
+    return thing
+'''def posterior_grid(x,y,hxi,hyi,rows,RW_obs,alpha_prior_est,rho_prior_est):
+    posteriors = np.zeros((len(y),len(x)))
+    h = [-9999,-9999]
+    for yi in range(len(y)):
+        h[hyi] = y[yi]
+        for xi in range(len(x)):
+            h[hxi] = x[xi]
+            posteriors[yi,xi] = get_posterior(h,rows,RW_obs,alpha_prior_est,rho_prior_est) 
+    return posteriors
+'''
+'''def plot_this_in_3d(x,y,z,xlabel='x',ylabel='y',zlabel='z'):
+    fig = plt.figure()
+    ax = fig.gca(projection='3d')
+    X, Y = np.meshgrid(x,y)
+    Z = z
+    
+    surf = ax.plot_surface(X,Y,Z,cmap = cm.coolwarm, linewidth=0,antialiased=False)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_zlabel(zlabel)
+'''    
+def RW_Q(old_Q, r, h):
+    return old_Q + h[0]*(h[1]*r - old_Q)
+
+def get_reward(stim,act):
+    if stim == 0:
+        if act == "go":
+            r = get_r_prob_80()
+        elif act == "nogo":
+            r = 0      
+    elif stim == 1:
+        if act == "go":
+            r = 0
+        elif act == "nogo":
+            r = get_r_prob_80()    
+    elif stim == 2:
+        if act == "go":
+            r = get_loss_prob_80()
+        elif act == "nogo":
+            r = 0    
+    elif stim == 3:
+        if act == "go":
+            r = 0
+        elif act == "nogo":
+            r = get_loss_prob_80()
+    return r
+
+def get_r_prob_80():
+    rand = np.random.random()
+    if rand < 0.8:
+        return 1
+    else:
+        return 0
+def get_loss_prob_80():
+    rand = np.random.random()
+    if rand < 0.8:
+        return -1
+    else:
+        return 0
+def get_stim(): # generates a state
+    stim = np.random.randint(4)
+    return stim
+def get_act(probgo):
+    ran = np.random.random()
+    if ran<probgo:
+        # choose go
+        act = "go"
+    else:
+        act = "nogo"
+    return act
+def act_i(act):
+    if act == "go":
+        return 1
+    else:
+        return 0
+#def negloglik(h,*args):
+#    return -get_loglik(h,args[0],args[1])
+def neglogpost(h,*args):
+    return -get_posterior(h,args[0],args[1],args[2],args[3])
+'''def overall_neglogpost(theta,*args):
+    data_for_subj = args[0]
+    f_obs = args[1]
+    alpha_prior_est = theta[0] # check
+    rho_prior_est = theta[1] # check
+    # need to somehow integrate neglogpost over all h
+    #mean = np.array([alpha_prior_est[0], rho_prior_est[0]])
+    #cov = np.array([[20, 0], [0, 20]])
+    #mvnun(np.array([-np.inf, -np.inf]), np.array([np.inf, np.inf]), mean, cov)
+'''
+'''def get_loglik(h,data,f_obs):
+    Q = np.zeros((4,2))
+    loglik = 0
+    for row in data:
+        s = row[0]
+        ai = act_i(row[1])
+        r = row[2]
+        
+        prob_a = f_obs(s,ai,Q,h)
+        if prob_a<0:
+            print("A probability smaller than 0!")
+            break
+        loglik += np.log(prob_a)
+        Q[s,ai] = RW_Q(Q[s,ai],r,h)
+    return loglik
+'''
+def get_posterior(h,data,f_obs,alpha_prior_est,rho_prior_est):
+    #print('h',h)
+    Q = np.zeros((4,2))
+    logpost = 0
+    for row in data:
+        s = row[0]
+        ai = act_i(row[1])
+        r = row[2]
+        
+        prob_a = f_obs(s,ai,Q,h)
+        if prob_a<0:
+            print("A probability smaller than 0!")
+            break
+        with warnings.catch_warnings():
+            warnings.filterwarnings('error')
+            try:
+                logpost += np.log(prob_a)
+            except Warning as e:
+                print('tadaaaaaaa')
+        Q[s,ai] = RW_Q(Q[s,ai],r,h)
+    prior_prob_alpha = gaussian(h[0],alpha_prior_est[0],alpha_prior_est[1]) 
+    prior_prob_rho = gaussian(h[1],rho_prior_est[0],rho_prior_est[1])
+    
+    with warnings.catch_warnings():
+        warnings.filterwarnings('error')
+        try:
+            logpost += np.log(prior_prob_alpha) + np.log(prior_prob_rho)
+        except Warning as e:
+            print('We got a warning because we are trying to take the log of alpha=',prior_prob_alpha,' or rho=',prior_prob_rho,'.')
+            print('alpha_prior_est ',alpha_prior_est)
+            print('rho_prior_est ',rho_prior_est)
+            quit()
+    return logpost
+
+def gen_data(true_params):
+    n_choices = 12
+    for subj in range(n):
+        #print("The generated parameters are alpha={0} and rho={1}".format(alphas[subj],rhos[subj]))
+        ### generate dummy data ###
+        f = open('dummydata'+str(subj)+'.txt','w')
+        f.write("s\t")
+        f.write("a\t")
+        f.write("r\n")
+        Q = np.zeros((4,2))
+        # actions: go or nogo
+        # stimuli:
+        h=np.array([alphas[subj],rhos[subj]]) # alpha, rho
+        for i in range(n_choices):
+            stim = get_stim()          
+            goprob=RW_obs(stim,1,Q,h) # find the probability that the agent will "go"
+            act = get_act(goprob) # plug the "go" probability into the get_act function
+            r = get_reward(stim,act)
+            
+            Q[stim,act_i(act)] = Q[stim,act_i(act)] + h[0]*(h[1]*r - Q[stim,act_i(act)])#RW_Q(Q[stim,act_i(act)],r,h)
+            
+            f.write(str(stim))
+            f.write('\t')
+            f.write(act)
+            f.write('\t')
+            f.write(str(r))
+            f.write('\n')
+        f.close()
+        ##################################
+    return
+
+### Hyperparameters ###
+
+n = 33 # number of subjects
+
+### I choose hyperparameters to use to generate the data ###
+
+# true hyperparameters for alpha
+alpha_loc = 0.7 # mean for alpha
+alpha_scale = 0.5 # std dev for alpha
+# true hyperparameters for rho
+rho_loc = 2 # mean for rho
+rho_scale = 0.5 # std dev for rho
+#######################
+
+
+
+# generate an alpha parameter for each subject
+alphas = []
+for i in range(n):
+    alpha=-1
+    while alpha<=0 or alpha>1:
+        alpha = np.random.normal(loc=alpha_loc,scale=alpha_scale)
+    alphas.append(alpha)
+# generate a rho parameter for each subject 
+rhos = []
+for i in range(n):
+    rho=-1
+    while rho<=0:
+        rho = np.random.normal(loc=rho_loc,scale=rho_scale)
+    rhos.append(rho)
+
+# stack the alphas and the rhos together like (alpha1,rho1),(alpha2,rho2),...
+true_params=np.stack([alphas,rhos],axis=1)
+
+gen_data(true_params) # generate the data using the true parameters for each subject and save it to files
+
+
+
+#### Initial estimates for hyperparameters ####
+alpha_loc_est   = 0.8  # mean est for alpha
+alpha_scale_est = 0.55 # std dev est for alpha
+rho_loc_est     = 1.9  # mean est for rho 
+rho_scale_est   = 0.55 # std dev est for rho
+
+alpha_prior_est = [alpha_loc_est,alpha_scale_est] # mean, std dev
+rho_prior_est   = [rho_loc_est,rho_scale_est]     # mean, std dev
+
+#### Read in all the data from files ####
+all_data = []
+for subj in range(n):
+    #print('We are now on Subject ',subj)
+    ### Read the data from file ###
+    with open('dummydata'+str(subj)+'.txt', 'r') as f:
+        reader = csv.reader(f, delimiter='\t')
+        header = next(reader)
+        rows = [[int(row[0]),row[1], int(row[2])] for row in reader]
+        all_data.append(rows)
+
+#### Do expectation maximisation ####
+for k in range(3): 
+    m=[] # used to be est_params
+    Sigma=[] # used to be var_subj
+    for subj in range(n):
+        rows = all_data[subj]
+        bounds=Bounds([0.5,1.5],[1,2.5]) # set upper and lower bounds for the parameters we're trying to estimate
+    
+    
+        #############################
+        init_ests = [0.75,2.1] # initial estimates for the parameters we're trying to find 
+        ### minimize the negative log posterior ###
+        #print('neglogpost: ',neglogpost([0.7,2],rows,RW_obs,alpha_prior_est,rho_prior_est))
+        argmax_est = minimize(neglogpost,init_ests, args=(rows,RW_obs,alpha_prior_est,rho_prior_est),bounds=bounds)
+        #print("The re-generated parameters are alpha={0} and rho={1}".format(argmax_est.x[0],argmax_est.x[1]),'\n')
+        ###################################
+        m.append([argmax_est.x[0],argmax_est.x[1]])
+        
+        #print('true params for Subject ',subj,': ',true_params[subj])
+        #print('estimated params for Subject ',subj,': ',m[subj])
+        alpha_guess_range = np.arange(0.79,0.82,0.001)
+        rho_guess_range = np.arange(1.89,1.91,0.001)
+    
+        hxi = 0
+        hyi = 1
+        #posteriors = posterior_grid(alpha_guess_range,rho_guess_range,hxi,hyi,rows,RW_obs,alpha_prior_est,rho_prior_est)
+        #plot_this_in_3d(alpha_guess_range,rho_guess_range,posteriors,'alpha','rho','posterior')
+        hess = nd.Hessian(neglogpost)(m[-1],rows,RW_obs,alpha_prior_est,rho_prior_est)
+        
+        det_hess = np.linalg.det(hess)
+        
+        c = det_hess / (2*np.pi)
+        Sigma.append(1/c)
+        
+
+        # so now... for this subject, we've got m[i], aka est_params[subj]
+        # we've also got Sigma[i], aka var_subj[i]
+        # we're now going to say that $p(\mathbf{h}|\mathbf{A}_i)$ is approximately equal to the Gaussian distribution with mean $\mathbf{m}_i$ and variance $\Sigma_i$.
+    ### now we do the global stuff, the stuff that combines the info for individual subjects    
+    m=np.array(m)
+    Sigma=np.array(Sigma)
+    mu_arr = np.average(m,axis=0)
+    
+        
+    nu_arr = np.sqrt(1/n*(np.sum(m**2+np.tile(Sigma,(2,1)).transpose(),axis=0))- mu_arr**2)
+    
+    # the first element of mu_arr will be the mean of the prior gaussian for alpha
+    # the second element of mu_arr will be the mean of the prior gaussian for rho
+    # the first element of nu_arr will be the std dev of the prior gaussian for alpha
+    # the second element of nu_arr will be the std dev of the prior gaussian for rho
+    # these means and std devs are now our new estimates for the hyperparameters
+    alpha_prior_est = [mu_arr[0],nu_arr[0]]
+    rho_prior_est = [mu_arr[1],nu_arr[1]]
+    print('mean for alpha \t= ',mu_arr[0],';\t mean for rho = ',mu_arr[1])
+    print('std dev for alpha \t=',nu_arr[0],';\t std dev for rho = ',nu_arr[1])
+# let's plot the posterior probability of h vs h
+# 
+
+### Try to recover the hyperparams ###
+#mean_alpha,std_alpha=norm.fit(est_params[:,0])
+#mean_rho,std_rho=norm.fit(est_params[:,1])
+
+
+
+#print("The mean of alpha is ",mean_alpha)
+#print("The std dev of alpha is ",std_alpha)
+#print("The mean of rho is ",mean_rho)
+#print("The std dev of rho is ",std_rho)
+
+#n_bins=10
+#plt.figure()
+#plt.hist(est_params[:,0], bins=n_bins)
+
+#xmin, xmax = plt.xlim()
+#x = np.linspace(xmin, xmax, 100)
+#y = norm.pdf(x, mean_alpha, std_alpha)
+#plt.plot(x, y)
+#plt.xlabel('alpha')
+plt.show()
+'''
+plt.figure()
+plt.hist(est_params[:,1], bins=n_bins)
+xmin, xmax = plt.xlim()
+x = np.linspace(xmin, xmax, 100)
+y = norm.pdf(x, mean_rho, std_rho)
+plt.plot(x, y)
+plt.xlabel('rho')
+
+
+
+plt.show()
+'''
